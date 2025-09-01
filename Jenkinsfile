@@ -33,7 +33,7 @@ pipeline {
                 else
                     echo "Build directory does not exist!"
                     # Uncomment the next line if you want the pipeline to fail
-                    # exit 1
+                    exit 1
                 fi
             '''
         }
