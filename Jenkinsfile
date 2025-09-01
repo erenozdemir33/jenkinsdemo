@@ -15,12 +15,6 @@ pipeline {
   }
 
   stages {
-    stage('Checkout') {
-      steps {
-        git url: 'https://github.com/<user>/<repo>.git', branch: 'main'
-      }
-    }
-
     stage('Build') {
       agent { docker { image 'node:18-alpine'; reuseNode true } }
       steps {
@@ -28,7 +22,7 @@ pipeline {
           set -e
           node -v && npm -v
 
-          if [ -f package-lock.json ]; then
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
             npm ci
           else
             npm install
@@ -45,7 +39,11 @@ pipeline {
       steps {
         sh '''
           set -e
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
           mkdir -p test-results
           npm test -- --ci --watchAll=false --coverage --testResultsProcessor=jest-junit --passWithNoTests
