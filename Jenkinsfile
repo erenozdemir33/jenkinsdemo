@@ -20,5 +20,22 @@ pipeline {
                 '''
             }
         }
+    stage('Check Build Output') {
+        steps {
+            sh '''
+                echo ">> Checking if build directory was created..."
+
+                # Test if the "build" folder exists
+                if [ -d build ]; then
+                    echo "Build directory exists."
+                    echo "Listing build directory content:"
+                    ls -la build
+                else
+                    echo "Build directory does not exist!"
+                    # Uncomment the next line if you want the pipeline to fail
+                    # exit 1
+                fi
+            '''
+        }
     }
 }
