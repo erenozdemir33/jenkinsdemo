@@ -2,7 +2,7 @@ pipeline {
   agent {
     docker {
       image 'node:18-alpine'
-      args '-u 0:0'
+      args '-u 0:0'         // root: kolay kurulum
       reuseNode true
     }
   }
@@ -23,9 +23,7 @@ pipeline {
 
   stages {
     stage('Checkout') {
-      steps {
-        checkout scm
-      }
+      steps { checkout scm }
     }
 
     stage('Deps & Build') {
@@ -50,15 +48,12 @@ pipeline {
       steps {
         sh '''
           set -e
-
-          # jest-junit yoksa ekle
           if ! npm ls --depth=0 jest-junit >/dev/null 2>&1; then
             npm i -D jest-junit
           fi
 
           mkdir -p test-results
 
-          # Coverage + junit reporter + coverage-summary json
           npm test -- \
             --ci \
             --watchAll=false \
@@ -74,6 +69,7 @@ pipeline {
       }
       post {
         always {
+          // İstersen burada allowEmptyResults:false yapıp test raporu yoksa kırdırabilirsin
           junit allowEmptyResults: true, testResults: 'test-results/junit.xml'
         }
       }
@@ -84,51 +80,57 @@ pipeline {
         sh '''
           set -e
 
-          # summary yoksa coverage-final.json'a fallback
           COV_SUMMARY="coverage/coverage-summary.json"
           COV_FINAL="coverage/coverage-final.json"
 
+          # coverage-summary yoksa coverage-final'dan üret
           if [ ! -f "$COV_SUMMARY" ] && [ -f "$COV_FINAL" ]; then
             echo "coverage-summary.json yok; coverage-final.json kullanılacak (fallback)."
-            # coverage-final.json -> summary formatına dönüştür (toplam metrikler eşdeğer)
-            node -e "
-              const fs=require('fs');
-              const total=JSON.parse(fs.readFileSync(process.argv[1],'utf8')).total;
-              const out={ total: { lines: { pct: total.lines.pct }, branches:{ pct: total.branches.pct }, functions:{ pct: total.functions.pct }, statements:{ pct: total.statements.pct } } };
-              fs.mkdirSync('coverage',{recursive:true});
-              fs.writeFileSync(process.argv[2], JSON.stringify(out,null,2));
-            " "$COV_FINAL" "$COV_SUMMARY"
+            node <<'NODE'
+const fs = require('fs');
+const total = JSON.parse(fs.readFileSync('coverage/coverage-final.json','utf8')).total;
+const out = { total: {
+  lines:      { pct: total.lines.pct },
+  branches:   { pct: total.branches.pct },
+  functions:  { pct: total.functions.pct },
+  statements: { pct: total.statements.pct }
+}};
+fs.mkdirSync('coverage', { recursive: true });
+fs.writeFileSync('coverage/coverage-summary.json', JSON.stringify(out, null, 2));
+NODE
           fi
 
           if [ ! -f "$COV_SUMMARY" ]; then
-            echo "coverage-summary.json not found. Did tests run with --coverage and reporter json-summary?"
+            echo "coverage-summary.json not found. Did tests run with --coverage and json-summary?"
             exit 1
           fi
 
-          node -e "
-            const fs = require('fs');
-            const thr = {
-              lines:      +process.env.COV_LINES,
-              branches:   +process.env.COV_BRANCHES,
-              functions:  +process.env.COV_FUNCTIONS,
-              statements: +process.env.COV_STATEMENTS,
-            };
-            const total = JSON.parse(fs.readFileSync('coverage/coverage-summary.json','utf8')).total;
-            const pct = {
-              lines: total.lines.pct,
-              branches: total.branches.pct,
-              functions: total.functions.pct,
-              statements: total.statements.pct,
-            };
-            console.log('Coverage:', pct, '\\nThresholds:', thr);
-            const failed = Object.keys(thr).filter(k => (pct[k] ?? 0) < thr[k]);
-            if (failed.length) {
-              console.error('Quality gate FAILED for:', failed.map(k => `${k} ${pct[k]}% < ${thr[k]}%`).join(', '));
-              process.exit(1);
-            } else {
-              console.log('Quality gate PASSED ✅');
-            }
-          "
+          # Eşik kontrolü — quoted HEREDOC ile güvenli
+          node <<'NODE'
+const fs = require('fs');
+const thr = {
+  lines:      +process.env.COV_LINES,
+  branches:   +process.env.COV_BRANCHES,
+  functions:  +process.env.COV_FUNCTIONS,
+  statements: +process.env.COV_STATEMENTS,
+};
+const total = JSON.parse(fs.readFileSync('coverage/coverage-summary.json','utf8')).total;
+const pct = {
+  lines: total.lines.pct,
+  branches: total.branches.pct,
+  functions: total.functions.pct,
+  statements: total.statements.pct,
+};
+console.log('Coverage:', pct, '\\nThresholds:', thr);
+const failed = Object.keys(thr).filter(k => (pct[k] ?? 0) < thr[k]);
+if (failed.length) {
+  console.error('Quality gate FAILED for: ' +
+    failed.map(k => `${k} ${pct[k]}% < ${thr[k]}%`).join(', '));
+  process.exit(1); // <-- Fail => pipeline FAIL, sonraki stage'ler çalışmaz
+} else {
+  console.log('Quality gate PASSED ✅');
+}
+NODE
         '''
       }
     }
